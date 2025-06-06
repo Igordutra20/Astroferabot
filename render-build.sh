@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# Instala o Tesseract OCR no ambiente da Render
+# Instala o Tesseract OCR
 apt-get update && apt-get install -y tesseract-ocr
 
-# Continua com o build padrão do Python
+# Instala as dependências do projeto Python
 pip install -r requirements.txt
