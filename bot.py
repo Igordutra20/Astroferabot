@@ -1,96 +1,94 @@
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 from discord import app_commands
+import os
 import asyncio
 
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+intents.members = True
+
+bot = commands.Bot(command_prefix="/", intents=intents)
 
 acertos_file = "acertos.txt"
-meta = 530
+META = 530
 
-# View com botão
-class AcertoView(discord.ui.View):
-    @discord.ui.button(label="Responder", style=discord.ButtonStyle.primary)
-    async def responder(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(AcertoModal())
-
-# Modal para inserir o valor de acerto
-class AcertoModal(discord.ui.Modal, title="Informe seu acerto"):
-    acerto = discord.ui.TextInput(label="Quantos de acerto você tem?", placeholder="Ex: 450", required=True)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            acerto_valor = int(self.acerto.value.strip())
-        except ValueError:
-            await interaction.response.send_message("Por favor, insira um número válido.", ephemeral=True)
-            return
-
-        user_id = str(interaction.user.id)
-        username = str(interaction.user)
-        salvar_acerto(user_id, username, acerto_valor)
-
-        await interaction.response.send_message(f"Acerto registrado com sucesso: {acerto_valor}", ephemeral=True)
-
-def salvar_acerto(user_id, username, acerto):
-    dados = carregar_acertos()
-    dados[user_id] = {"username": username, "acerto": acerto}
-    with open(acertos_file, "w", encoding="utf-8") as f:
-        for uid, info in dados.items():
-            f.write(f"{uid};{info['username']};{info['acerto']}\n")
-
-def carregar_acertos():
-    dados = {}
-    try:
-        with open(acertos_file, "r", encoding="utf-8") as f:
-            for linha in f:
-                partes = linha.strip().split(";")
-                if len(partes) == 3:
-                    uid, username, acerto = partes
-                    dados[uid] = {"username": username, "acerto": int(acerto)}
-    except FileNotFoundError:
+# Cria o arquivo se não existir
+if not os.path.exists(acertos_file):
+    with open(acertos_file, "w") as f:
         pass
-    return dados
 
+# Bot online
 @bot.event
 async def on_ready():
+    await bot.tree.sync()
     print(f"Bot conectado como {bot.user}")
-    try:
-        synced = await bot.tree.sync()
-        print(f"Comandos sincronizados: {len(synced)}")
-    except Exception as e:
-        print(f"Erro ao sincronizar comandos: {e}")
 
-# Comando para enviar pesquisa
-@bot.tree.command(name="pesquisa", description="Pergunta de acerto")
+# Comando /pesquisa
+@bot.tree.command(name="pesquisa", description="Faz uma pesquisa sobre acertos")
 @app_commands.checks.has_permissions(administrator=True)
 async def pesquisa(interaction: discord.Interaction):
-    await interaction.response.send_message("Quantos de acerto você tem?", view=AcertoView())
-    await asyncio.sleep(5)
+    await interaction.response.send_message(
+        "Quantos de acerto você tem?",
+        view=AcertoButton(),
+        ephemeral=False
+    )
+    # Apaga a mensagem do comando do admin depois de 5 segundos
     try:
+        await asyncio.sleep(5)
         await interaction.delete_original_response()
-    except discord.NotFound:
+    except:
         pass
 
-# Comando para mostrar ranking
+# Botão de acerto
+class AcertoButton(discord.ui.View):
+    @discord.ui.button(label="Responder", style=discord.ButtonStyle.primary)
+    async def responder(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("Quantos de acerto você tem? (ex: 450)", ephemeral=True)
+
+        def check(m):
+            return m.author == interaction.user and isinstance(m.channel, discord.DMChannel)
+
+        try:
+            msg = await bot.wait_for("message", timeout=60.0, check=check)
+            valor = int(msg.content)
+
+            with open(acertos_file, "a", encoding="utf-8") as f:
+                f.write(f"{interaction.user.name}={valor}\n")
+
+            await msg.channel.send("Obrigado! Seu acerto foi registrado ✅")
+
+        except asyncio.TimeoutError:
+            await interaction.user.send("⏰ Tempo esgotado. Por favor, tente novamente.")
+        except ValueError:
+            await interaction.user.send("❌ Valor inválido. Envie apenas números.")
+
+# Comando /rankacerto
 @bot.tree.command(name="rankacerto", description="Mostra o ranking de acertos")
+@app_commands.checks.has_permissions(administrator=True)
 async def rankacerto(interaction: discord.Interaction):
-    dados = carregar_acertos()
-    if not dados:
-        await interaction.response.send_message("Nenhum dado de acerto encontrado.", ephemeral=True)
+    if not os.path.exists(acertos_file):
+        await interaction.response.send_message("Nenhum dado de acerto foi registrado ainda.", ephemeral=True)
         return
 
-    ordenado = sorted(dados.values(), key=lambda x: x["acerto"], reverse=True)
-    msg = "**📊 Ranking de Acertos**\n\n"
-    for i, info in enumerate(ordenado, start=1):
-        status = "✅" if info["acerto"] >= meta else "❌"
-        msg += f"**{i}.** {info['username']} - `{info['acerto']}` acerto {status}\n"
+    with open(acertos_file, "r", encoding="utf-8") as f:
+        dados = [linha.strip().split("=") for linha in f if "=" in linha]
 
-    await interaction.response.send_message(msg)
+    if not dados:
+        await interaction.response.send_message("Nenhum dado válido encontrado.", ephemeral=True)
+        return
 
-# Caso o usuário não seja administrador
-@pesquisa.error
-async def pesquisa_error(interaction: discord.Interaction, error):
-    if isinstance(error, app_commands.errors.MissingPermissions):
-        await interaction.response.send_message("Você não tem permissão para usar este comando.", ephemeral=True)
+    # Ordenar
+    dados_ordenados = sorted(dados, key=lambda x: int(x[1]), reverse=True)
+
+    acima_meta = [f"✅ **{nome}** - {valor}" for nome, valor in dados_ordenados if int(valor) >= META]
+    abaixo_meta = [f"❌ **{nome}** - {valor}" for nome, valor in dados_ordenados if int(valor) < META]
+
+    resultado = "**🏆 Ranking de Acertos**\n\n"
+    resultado += "**🔝 Atingiram a meta (530+):**\n" + "\n".join(acima_meta) + "\n\n"
+    resultado += "**📉 Ainda não atingiram:**\n" + "\n".join(abaixo_meta)
+
+    await interaction.response.send_message(resultado)
+
+# Iniciar o bot
+bot.run(os.getenv("KEY"))
