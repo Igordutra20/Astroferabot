@@ -12,7 +12,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents)  # Corrigido: intents em vez de intents
 acertos_arquivo = "acertos.txt"
 meta = 530
 bot.requisicoes_pendentes = {}
@@ -36,7 +36,12 @@ class AcertoView(discord.ui.View):
 
         try:
             msg = await bot.wait_for("message", check=check, timeout=60)
-            acertos = int(msg.content.strip())
+            try:
+                acertos = int(msg.content.strip())
+            except ValueError:
+                await msg.channel.send("❌ Por favor, envie apenas números (ex: 450)")
+                return
+
             nome_usuario = interaction.user.name
 
             novos_dados = []
@@ -45,12 +50,13 @@ class AcertoView(discord.ui.View):
             if os.path.exists(acertos_arquivo):
                 with open(acertos_arquivo, "r") as f:
                     for linha in f:
-                        nome, valor = linha.strip().split(" = ")
-                        if nome == nome_usuario:
-                            novos_dados.append(f"{nome_usuario} = {acertos}")
-                            atualizado = True
-                        else:
-                            novos_dados.append(f"{nome} = {valor}")
+                        if " = " in linha:  # Verificação adicional para evitar erros
+                            nome, valor = linha.strip().split(" = ")
+                            if nome == nome_usuario:
+                                novos_dados.append(f"{nome_usuario} = {acertos}")
+                                atualizado = True
+                            else:
+                                novos_dados.append(f"{nome} = {valor}")
 
             if not atualizado:
                 novos_dados.append(f"{nome_usuario} = {acertos}")
@@ -136,8 +142,14 @@ async def on_message(message):
     if message.author == bot.user or not message.attachments:
         return
 
-    # Verificar se é resposta a uma requisição
-    if message.content.startswith("📸") or not any(m.embeds for m in await message.channel.history(limit=5).flatten()):
+    # Verificar histórico de mensagens de forma assíncrona correta
+    has_embeds = False
+    async for m in message.channel.history(limit=5):
+        if m.embeds:
+            has_embeds = True
+            break
+
+    if message.content.startswith("📸") or not has_embeds:
         return
 
     attachment = message.attachments[0]
@@ -221,7 +233,7 @@ async def pesquisa(interaction: discord.Interaction):
         "Quantos de acerto você tem?", 
         view=AcertoView()
     )
-    await asyncio.sleep(3000)
+    await asyncio.sleep(3000)  # Considerar reduzir este tempo
     try:
         await interaction.delete_original_response()
     except discord.NotFound:
@@ -235,8 +247,12 @@ async def rankacerto(interaction: discord.Interaction):
         return
 
     with open(acertos_arquivo, "r") as f:
-        dados = [linha.strip().split(" = ") for linha in f]
-        dados = sorted(dados, key=lambda x: int(x[1]), reverse=True)
+        dados = []
+        for linha in f:
+            if " = " in linha.strip():
+                dados.append(linha.strip().split(" = "))
+    
+    dados = sorted(dados, key=lambda x: int(x[1]), reverse=True)
 
     mensagem = "**📊 Ranking de Acertos**\n"
     for i, (nome, acertos) in enumerate(dados, 1):
@@ -256,6 +272,10 @@ class DummyHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b'Bot is running.')
+    
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
 
 def run_web_server():
     server = HTTPServer(('0.0.0.0', 10000), DummyHandler)
