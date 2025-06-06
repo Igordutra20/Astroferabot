@@ -3,6 +3,11 @@ from discord.ext import commands
 from discord import app_commands
 import asyncio
 import os
+import cv2
+import numpy as np
+import pytesseract
+from PIL import Image
+import io
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -112,6 +117,59 @@ class DummyHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b'Bot is running.')
+
+def detectar_itens_faltando(image_bytes):
+    # Abrir imagem a partir dos bytes recebidos
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    opencv_img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+
+    # Executar OCR com posição dos textos
+    data = pytesseract.image_to_data(opencv_img, output_type=pytesseract.Output.DICT, lang='eng')
+
+    resultados = []
+
+    for i in range(len(data["text"])):
+        texto = data["text"][i]
+        
+        # Procurar textos no formato x/y
+        if "/" in texto:
+            partes = texto.split("/")
+            if len(partes) == 2 and partes[0].replace('.', '').isdigit() and partes[1].replace('.', '').isdigit():
+                atual = int(partes[0].replace('.', ''))
+                total = int(partes[1].replace('.', ''))
+
+                # Coordenadas do texto detectado
+                x = data["left"][i]
+                y = data["top"][i]
+                w = data["width"][i]
+                h = data["height"][i]
+
+                # Recortar a área do texto para verificar a cor
+                roi_texto = opencv_img[y:y + h, x:x + w]
+                cor_media = cv2.mean(roi_texto)[:3]  # RGB
+
+                # Condição para vermelho (predominância de R, baixa de G e B)
+                is_red = cor_media[2] > 140 and cor_media[0] < 100 and cor_media[1] < 100
+
+                if atual < total and is_red:
+                    # Recortar a imagem à esquerda do número (onde está o ícone do item)
+                    largura_icone = h
+                    inicio_x = max(0, x - largura_icone - 10)
+                    fim_x = x - 10
+                    roi_icone = opencv_img[y:y + h, inicio_x:fim_x]
+
+                    # Converter o ícone recortado para bytes
+                    _, buffer = cv2.imencode('.png', roi_icone)
+                    icon_image = io.BytesIO(buffer)
+                    icon_image.name = f'item_{i}.png'
+
+                    # Adicionar aos resultados
+                    resultados.append({
+                        "quantidade": f"{atual}/{total}",
+                        "imagem_bytes": icon_image
+                    })
+
+    return resultados
 
 def run_web_server():
     server = HTTPServer(('0.0.0.0', 10000), DummyHandler)
