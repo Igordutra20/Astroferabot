@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import asyncio
+import os
 
 intents = discord.Intents.default()
 intents.message_content = False
@@ -87,3 +88,5 @@ async def rankacerto(interaction: discord.Interaction):
 async def pesquisa_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.errors.MissingPermissions):
         await interaction.response.send_message("Você não tem permissão para usar este comando.", ephemeral=True)
+
+bot.run(os.getenv("DISCORD_TOKEN"))
