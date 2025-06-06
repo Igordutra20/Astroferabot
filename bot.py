@@ -74,7 +74,7 @@ async def pesquisa(interaction: discord.Interaction):
         "Quantos de acerto você tem?", 
         view=AcertoView()
     )
-    await asyncio.sleep(5)
+    await asyncio.sleep(3000)
     try:
         await interaction.delete_original_response()
     except discord.NotFound:
