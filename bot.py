@@ -59,7 +59,13 @@ async def on_ready():
 @bot.tree.command(name="pesquisa", description="Inicia a pesquisa de acerto")
 @app_commands.checks.has_permissions(administrator=True)
 async def pesquisa(interaction: discord.Interaction):
-    await interaction.response.send_message("Quantos de acerto você tem?", view=AcertoView())
+    # Defer para que possamos deletar a mensagem original do comando depois
+    await interaction.response.defer(ephemeral=True)
+
+    # Envia a mensagem com o botão no canal
+    await interaction.channel.send("Quantos de acerto você tem?", view=AcertoView())
+
+    # Espera 5 segundos e deleta a mensagem original do comando
     await asyncio.sleep(5)
     try:
         await interaction.delete_original_response()
