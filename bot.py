@@ -24,43 +24,47 @@ class AcertoView(discord.ui.View):
         super().__init__(timeout=60)
 
     @discord.ui.button(label="Responder", style=discord.ButtonStyle.primary)
-    async def responder(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Quantos de acerto você tem? (ex: 450)", ephemeral=True)
+async def responder(self, interaction: discord.Interaction, button: discord.ui.Button):
+    try:
+        await interaction.user.send("Quantos de acerto você tem? (ex: 450)")
+    except discord.Forbidden:
+        await interaction.response.send_message("❌ Não consegui enviar DM para você. Verifique suas configurações de privacidade.", ephemeral=True)
+        return
 
-        def check(m):
-            return m.author.id == interaction.user.id and isinstance(m.channel, discord.DMChannel)
+    await interaction.response.send_message("📩 Verifique sua DM para responder!", ephemeral=True)
 
-        try:
-            msg = await bot.wait_for("message", check=check, timeout=60)
-            acertos = int(msg.content.strip())
+    def check(m):
+        return m.author.id == interaction.user.id and isinstance(m.channel, discord.DMChannel)
 
-            nome_usuario = interaction.user.name
+    try:
+        msg = await bot.wait_for("message", check=check, timeout=60)
+        acertos = int(msg.content.strip())
+        nome_usuario = interaction.user.name
 
-            # Carrega dados existentes e atualiza se o nome já existir
-            novos_dados = []
-            atualizado = False
+        # Atualiza ou adiciona no arquivo
+        novos_dados = []
+        atualizado = False
 
-            if os.path.exists(acertos_arquivo):
-                with open(acertos_arquivo, "r") as f:
-                    for linha in f:
-                        nome, valor = linha.strip().split(" = ")
-                        if nome == nome_usuario:
-                            novos_dados.append(f"{nome_usuario} = {acertos}")
-                            atualizado = True
-                        else:
-                            novos_dados.append(f"{nome} = {valor}")
+        if os.path.exists(acertos_arquivo):
+            with open(acertos_arquivo, "r") as f:
+                for linha in f:
+                    nome, valor = linha.strip().split(" = ")
+                    if nome == nome_usuario:
+                        novos_dados.append(f"{nome_usuario} = {acertos}")
+                        atualizado = True
+                    else:
+                        novos_dados.append(f"{nome} = {valor}")
 
-            if not atualizado:
-                novos_dados.append(f"{nome_usuario} = {acertos}")
+        if not atualizado:
+            novos_dados.append(f"{nome_usuario} = {acertos}")
 
-            with open(acertos_arquivo, "w") as f:
-                f.write("\n".join(novos_dados))
+        with open(acertos_arquivo, "w") as f:
+            f.write("\n".join(novos_dados))
 
-            await msg.channel.send(f"✅ Seus acertos ({acertos}) foram registrados com sucesso!")
+        await msg.channel.send(f"✅ Seus acertos ({acertos}) foram registrados com sucesso!")
 
-        except asyncio.TimeoutError:
-            await interaction.user.send("⏰ Tempo esgotado para responder.")
-
+    except asyncio.TimeoutError:
+        await interaction.user.send("⏰ Tempo esgotado para responder.")
 # Comando /pesquisa
 @bot.tree.command(name="pesquisa", description="Inicia a pesquisa de acertos")
 async def pesquisa(interaction: discord.Interaction):
