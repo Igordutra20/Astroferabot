@@ -120,167 +120,90 @@ class RequisicaoView(discord.ui.View):
         del bot.requisicoes_pendentes[self.requisicao_id]
         await interaction.response.send_message("✅ Requisição recusada com sucesso!", ephemeral=True)
 
-@bot.tree.command(name="requisicao", description="Solicitar itens que faltam")
+@bot.tree.command(name="requisicao", description="Solicitar envio de itens faltantes")
 async def requisicao(interaction: discord.Interaction):
-    try:
-        await interaction.user.send(
-            "📸 Por favor, envie uma imagem com os itens que você está verificando.\n"
-            "Certifique-se de que os números estão visíveis e legíveis.\n\n"
-            "O bot irá detectar automaticamente os itens que faltam (em vermelho)."
-        )
-        await interaction.response.send_message(
-            "📩 Verifique suas mensagens diretas! Envie a imagem lá.", 
-            ephemeral=True
-        )
-    except discord.Forbidden:
-        await interaction.response.send_message(
-            "❌ Não consegui enviar mensagem direta para você. Verifique suas configurações de privacidade.",
-            ephemeral=True
-        )
-
-def detectar_itens_faltando(image_bytes):
-    try:
-        # Converter bytes para imagem OpenCV
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        opencv_img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-        
-        # Pré-processamento específico para esse layout
-        gray = cv2.cvtColor(opencv_img, cv2.COLOR_BGR2GRAY)
-        blur = cv2.medianBlur(gray, 3)
-        thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
-        
-        # Configuração otimizada para listas hierárquicas
-        custom_config = r'--oem 3 --psm 6 -l por+eng --tessedit_char_whitelist=0123456789/.'
-        data = pytesseract.image_to_data(thresh, config=custom_config, output_type=pytesseract.Output.DICT)
-        
-        resultados = []
-        current_category = ""
-        current_item = ""
-
-        for i in range(len(data["text"])):
-            text = data["text"][i].strip()
-            conf = int(data["conf"][i])
-            
-            if conf < 75 or not text:
-                continue
-                
-            # Detectar categorias (texto em negrito/maior)
-            if data["height"][i] > (sum(data["height"])/len(data["height"])) * 1.5:
-                current_category = text
-                continue
-                
-            # Padrão para quantidades (X/Y)
-            if "/" in text and any(c.isdigit() for c in text):
-                # Limpar e formatar o texto
-                clean_text = text.replace(".", "").replace(",", "")
-                partes = clean_text.split("/")
-                
-                if len(partes) == 2 and partes[0].isdigit() and partes[1].isdigit():
-                    atual = int(partes[0])
-                    total = int(partes[1])
-                    
-                    if atual < total:
-                        # Recortar área do item (nome + quantidade)
-                        x, y = data["left"][i], data["top"][i]
-                        w, h = data["width"][i], data["height"][i]
-                        
-                        # Ajustar coordenadas para pegar o nome do item
-                        roi_x = max(0, x - 300)  # Aproximadamente 300px para esquerda
-                        roi_y = max(0, y - 30)
-                        roi_w = min(opencv_img.shape[1] - roi_x, 400)
-                        roi_h = min(opencv_img.shape[0] - roi_y, h + 60)
-                        
-                        roi = opencv_img[roi_y:roi_y+roi_h, roi_x:roi_x+roi_w]
-                        
-                        # Tentar extrair o nome do item usando OCR na região
-                        item_data = pytesseract.image_to_data(roi, config=r'--oem 3 --psm 6 -l por+eng')
-                        item_name = ""
-                        for line in item_data.split('\n'):
-                            parts = line.split()
-                            if len(parts) >= 12 and not any(c.isdigit() for c in parts[11]):
-                                item_name = parts[11] + " " + item_name
-                        
-                        item_name = item_name.strip() or f"Item {len(resultados)+1}"
-                        
-                        # Converter para bytes
-                        _, buffer = cv2.imencode('.png', roi)
-                        icon_image = io.BytesIO(buffer)
-                        
-                        resultados.append({
-                            "categoria": current_category,
-                            "nome": item_name,
-                            "quantidade": text,
-                            "faltando": total - atual,
-                            "imagem_bytes": icon_image
-                        })
-        
-        return resultados
-
-    except Exception as e:
-        print(f"Erro no processamento: {str(e)}")
-        return []
-
-async def processar_requisicao(message, attachment):
-    try:
-        image_bytes = await attachment.read()
-        itens_faltando = detectar_itens_faltando(image_bytes)
-        
-        if not itens_faltando:
-            await message.channel.send("✅ Todos os itens parecem estar completos!")
-            return
-        
-        embed = discord.Embed(
-            title=f"Requisição de {message.author.display_name}",
-            description="⚠️ Itens faltando detectados:",
-            color=discord.Color.orange()
-        )
-        
-        for i, item in enumerate(itens_faltando, 1):
-            embed.add_field(
-                name=f"Item {i}",
-                value=f"Quantidade: {item['quantidade']}",
-                inline=False
-            )
-        
-        first_image = itens_faltando[0]['imagem_bytes']
-        first_image.seek(0)
-        file = discord.File(first_image, filename="item.png")
-        embed.set_thumbnail(url="attachment://item.png")
-        
-        requisicao_id = str(message.id)
-        bot.requisicoes_pendentes[requisicao_id] = {
-            "user_id": message.author.id,
-            "itens": itens_faltando
-        }
-        
-        canal_requisicoes = bot.get_channel(1331515800607002675)
-        
-        if canal_requisicoes:
-            view = RequisicaoView(requisicao_id)
-            await canal_requisicoes.send(
-                embed=embed,
-                file=file,
-                view=view
-            )
-            await message.channel.send("✅ Sua requisição foi enviada para os administradores!")
-        else:
-            await message.channel.send("❌ Erro ao processar sua requisição. Canal não configurado.")
-    
-    except Exception as e:
-        print(f"Erro ao processar requisição: {e}")
-        await message.channel.send("❌ Ocorreu um erro ao processar sua imagem. Tente novamente.")
+    """Comando principal que inicia o processo de requisição"""
+    await interaction.response.send_message(
+        "📸 Por favor, envie a imagem dos itens faltantes aqui mesmo neste canal.",
+        ephemeral=True
+    )
 
 @bot.event
 async def on_message(message):
+    # Processar comandos primeiro
     await bot.process_commands(message)
     
-    if message.author == bot.user:
+    if message.author == bot.user or not message.attachments:
         return
+
+    # Verificar se é resposta a uma requisição
+    if message.content.startswith("📸") or not any(m.embeds for m in await message.channel.history(limit=5).flatten()):
+        return
+
+    attachment = message.attachments[0]
+    if not attachment.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+        return
+
+    # Criar embed com botões de aprovação
+    embed = discord.Embed(
+        title=f"Requisição de {message.author.display_name}",
+        description=f"📋 Itens solicitados\n\n"
+                   f"🔹 **Verificação manual necessária**\n"
+                   f"Administradores, verifiquem a imagem e aprovem se válida.",
+        color=discord.Color.orange()
+    )
+    embed.set_image(url=attachment.url)
     
-    if isinstance(message.channel, discord.DMChannel) and message.attachments:
-        for attachment in message.attachments:
-            if attachment.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-                await processar_requisicao(message, attachment)
+    # Adicionar botões
+    class ApproveView(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=None)
+            
+        @discord.ui.button(label="Aprovar", style=discord.ButtonStyle.success, custom_id="approve_req")
+        async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if not interaction.user.guild_permissions.administrator:
+                await interaction.response.send_message("❌ Apenas administradores podem aprovar.", ephemeral=True)
+                return
+                
+            embed = interaction.message.embeds[0]
+            embed.color = discord.Color.green()
+            embed.description = "✅ **Requisição Aprovada**\n\nOs itens serão enviados em breve."
+            
+            await interaction.message.edit(embed=embed, view=None)
+            
+            try:
+                await message.author.send(
+                    f"✅ Sua requisição foi aprovada por {interaction.user.mention}!\n"
+                    f"Os itens serão enviados em breve."
+                )
+            except discord.Forbidden:
+                pass
+                
+            await interaction.response.send_message("Requisição aprovada com sucesso!", ephemeral=True)
+        
+        @discord.ui.button(label="Recusar", style=discord.ButtonStyle.danger, custom_id="reject_req")
+        async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if not interaction.user.guild_permissions.administrator:
+                await interaction.response.send_message("❌ Apenas administradores podem recusar.", ephemeral=True)
+                return
+                
+            embed = interaction.message.embeds[0]
+            embed.color = discord.Color.red()
+            embed.description = "❌ **Requisição Recusada**\n\nVerifique os requisitos e tente novamente."
+            
+            await interaction.message.edit(embed=embed, view=None)
+            
+            try:
+                await message.author.send(
+                    f"❌ Sua requisição foi recusada por {interaction.user.mention}.\n"
+                    f"Motivo: Verificação manual não aprovada."
+                )
+            except discord.Forbidden:
+                pass
+                
+            await interaction.response.send_message("Requisição recusada com sucesso!", ephemeral=True)
+
+    await message.channel.send(embed=embed, view=ApproveView())
 
 @bot.event
 async def on_ready():
