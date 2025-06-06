@@ -129,94 +129,101 @@ class RequisicaoView(discord.ui.View):
 @bot.tree.command(name="requisicao", description="Solicitar envio de itens faltantes")
 async def requisicao(interaction: discord.Interaction):
     """Comando principal que inicia o processo de requisição"""
-    await interaction.response.send_message(
-        "📸 Por favor, envie a imagem dos itens faltantes aqui mesmo neste canal.",
-        ephemeral=True
-    )
+    try:
+        await interaction.user.send("📸 Por favor, envie a imagem dos itens faltantes aqui nesta conversa privada.")
+        await interaction.response.send_message(
+            "📩 Verifique sua DM (mensagens privadas) para enviar a imagem!",
+            ephemeral=True
+        )
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ Não consegui enviar DM para você. Verifique suas configurações de privacidade.",
+            ephemeral=True
+        )
 
 @bot.event
 async def on_message(message):
     # Processar comandos primeiro
     await bot.process_commands(message)
     
-    if message.author == bot.user or not message.attachments:
+    # Só processar se for mensagem privada e não for do bot
+    if message.author == bot.user or not isinstance(message.channel, discord.DMChannel):
         return
-
-    # Verificar histórico de mensagens de forma assíncrona correta
-    has_embeds = False
-    async for m in message.channel.history(limit=5):
-        if m.embeds:
-            has_embeds = True
-            break
-
-    if message.content.startswith("📸") or not has_embeds:
-        return
-
-    attachment = message.attachments[0]
-    if not attachment.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-        return
-
-    # Criar embed com botões de aprovação
-    embed = discord.Embed(
-        title=f"Requisição de {message.author.display_name}",
-        description=f"📋 Itens solicitados\n\n"
-                   f"🔹 **Verificação manual necessária**\n"
-                   f"Administradores, verifiquem a imagem e aprovem se válida.",
-        color=discord.Color.orange()
-    )
-    embed.set_image(url=attachment.url)
     
-    # Adicionar botões
-    class ApproveView(discord.ui.View):
-        def __init__(self):
-            super().__init__(timeout=None)
-            
-        @discord.ui.button(label="Aprovar", style=discord.ButtonStyle.success, custom_id="approve_req")
-        async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
-            if not interaction.user.guild_permissions.administrator:
-                await interaction.response.send_message("❌ Apenas administradores podem aprovar.", ephemeral=True)
-                return
-                
-            embed = interaction.message.embeds[0]
-            embed.color = discord.Color.green()
-            embed.description = "✅ **Requisição Aprovada**\n\nOs itens serão enviados em breve."
-            
-            await interaction.message.edit(embed=embed, view=None)
-            
-            try:
-                await message.author.send(
-                    f"✅ Sua requisição foi aprovada por {interaction.user.mention}!\n"
-                    f"Os itens serão enviados em breve."
-                )
-            except discord.Forbidden:
-                pass
-                
-            await interaction.response.send_message("Requisição aprovada com sucesso!", ephemeral=True)
+    # Verificar se tem anexo de imagem
+    if not message.attachments or not message.attachments[0].filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+        await message.channel.send("❌ Por favor, envie uma imagem (PNG, JPG ou JPEG).")
+        return
+
+    # Aqui você pode processar a imagem ou enviar para um canal de administradores
+    # Vou criar um exemplo enviando para um canal específico
+    
+    # Substitua CHANNEL_ID pelo ID do canal onde as requisições devem ser enviadas
+    channel_id = 1380521025804177448  # Troque pelo ID real do seu canal
+    channel = bot.get_channel(channel_id)
+    
+    if channel:
+        embed = discord.Embed(
+            title=f"Requisição de {message.author.display_name}",
+            description=f"📋 Itens solicitados\n\n"
+                       f"🔹 **Verificação manual necessária**\n"
+                       f"Administradores, verifiquem a imagem e aprovem se válida.",
+            color=discord.Color.orange()
+        )
+        embed.set_image(url=message.attachments[0].url)
         
-        @discord.ui.button(label="Recusar", style=discord.ButtonStyle.danger, custom_id="reject_req")
-        async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
-            if not interaction.user.guild_permissions.administrator:
-                await interaction.response.send_message("❌ Apenas administradores podem recusar.", ephemeral=True)
-                return
+        class ApproveView(discord.ui.View):
+            def __init__(self):
+                super().__init__(timeout=None)
                 
-            embed = interaction.message.embeds[0]
-            embed.color = discord.Color.red()
-            embed.description = "❌ **Requisição Recusada**\n\nVerifique os requisitos e tente novamente."
-            
-            await interaction.message.edit(embed=embed, view=None)
-            
-            try:
-                await message.author.send(
-                    f"❌ Sua requisição foi recusada por {interaction.user.mention}.\n"
-                    f"Motivo: Verificação manual não aprovada."
-                )
-            except discord.Forbidden:
-                pass
+            @discord.ui.button(label="Aprovar", style=discord.ButtonStyle.success, custom_id="approve_req")
+            async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("❌ Apenas administradores podem aprovar.", ephemeral=True)
+                    return
+                    
+                embed = interaction.message.embeds[0]
+                embed.color = discord.Color.green()
+                embed.description = "✅ **Requisição Aprovada**\n\nOs itens serão enviados em breve."
                 
-            await interaction.response.send_message("Requisição recusada com sucesso!", ephemeral=True)
+                await interaction.message.edit(embed=embed, view=None)
+                
+                try:
+                    await message.author.send(
+                        f"✅ Sua requisição foi aprovada por {interaction.user.mention}!\n"
+                        f"Os itens serão enviados em breve."
+                    )
+                except discord.Forbidden:
+                    pass
+                    
+                await interaction.response.send_message("Requisição aprovada com sucesso!", ephemeral=True)
+            
+            @discord.ui.button(label="Recusar", style=discord.ButtonStyle.danger, custom_id="reject_req")
+            async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("❌ Apenas administradores podem recusar.", ephemeral=True)
+                    return
+                    
+                embed = interaction.message.embeds[0]
+                embed.color = discord.Color.red()
+                embed.description = "❌ **Requisição Recusada**\n\nVerifique os requisitos e tente novamente."
+                
+                await interaction.message.edit(embed=embed, view=None)
+                
+                try:
+                    await message.author.send(
+                        f"❌ Sua requisição foi recusada por {interaction.user.mention}.\n"
+                        f"Motivo: Verificação manual não aprovada."
+                    )
+                except discord.Forbidden:
+                    pass
+                    
+                await interaction.response.send_message("Requisição recusada com sucesso!", ephemeral=True)
 
-    await message.channel.send(embed=embed, view=ApproveView())
-
+        await channel.send(embed=embed, view=ApproveView())
+        await message.channel.send("✅ Sua requisição foi enviada para os administradores! Aguarde a aprovação.")
+    else:
+        await message.channel.send("❌ O canal de requisições não foi configurado corretamente.")
 @bot.event
 async def on_ready():
     print(f"Bot online como {bot.user}")
