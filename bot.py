@@ -16,21 +16,24 @@ META_ACERTO = 530
 class AcertoView(discord.ui.View):
     @discord.ui.button(label="Responder", style=discord.ButtonStyle.primary)
     async def responder(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Quantos de acerto você tem? (ex: 450)", ephemeral=True)
-
-        def check(m):
-            return m.author == interaction.user and isinstance(m.channel, discord.DMChannel)
-
         try:
-            msg = await bot.wait_for("message", timeout=60.0, check=check)
-            try:
-                valor = int(msg.content)
-                salvar_acerto(interaction.user, valor)
-                await msg.channel.send(f"Acerto registrado: {valor}")
-            except ValueError:
-                await msg.channel.send("Por favor, envie apenas números.")
+            await interaction.response.send_message("Quantos de acerto você tem? (ex: 450)", ephemeral=True)
+
+            def check(m):
+                return m.author.id == interaction.user.id and isinstance(m.channel, discord.DMChannel)
+
+            await interaction.user.send("Quantos de acerto você tem? (ex: 450)")
+
+            # Espera por até 60 segundos pela resposta no privado
+            msg = await bot.wait_for("message", check=check, timeout=60)
+
+            # Salva a resposta em 'acertos.txt'
+            with open("acertos.txt", "a", encoding="utf-8") as f:
+                f.write(f"{interaction.user.name} = {msg.content}\n")
+
+            await interaction.user.send("✅ Sua resposta foi registrada com sucesso!")
         except asyncio.TimeoutError:
-            await interaction.user.send("Tempo esgotado para responder.")
+            await interaction.user.send("⏰ Tempo esgotado! Por favor, tente novamente clicando no botão.")
 
 
 def salvar_acerto(user, valor):
