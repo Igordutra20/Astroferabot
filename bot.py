@@ -144,77 +144,75 @@ def detectar_itens_faltando(image_bytes):
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         opencv_img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
         
-        # Pré-processamento avançado
+        # Pré-processamento específico para esse layout
         gray = cv2.cvtColor(opencv_img, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (3, 3), 0)
-        thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                    cv2.THRESH_BINARY_INV, 11, 2)
+        blur = cv2.medianBlur(gray, 3)
+        thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
         
-        # Configurações customizadas para seu formato específico
-        custom_config = r'--oem 3 --psm 6 -l por+eng'
-        data = pytesseract.image_to_data(thresh, config=custom_config, 
-                                       output_type=pytesseract.Output.DICT)
+        # Configuração otimizada para listas hierárquicas
+        custom_config = r'--oem 3 --psm 6 -l por+eng --tessedit_char_whitelist=0123456789/.'
+        data = pytesseract.image_to_data(thresh, config=custom_config, output_type=pytesseract.Output.DICT)
         
         resultados = []
-        current_item = {"nome": "", "quantidade": ""}
+        current_category = ""
+        current_item = ""
 
         for i in range(len(data["text"])):
             text = data["text"][i].strip()
             conf = int(data["conf"][i])
             
-            # Filtros de qualidade
-            if conf < 70 or not text or len(text) < 2:
+            if conf < 75 or not text:
                 continue
                 
-            # Padrão para nomes de itens (linhas sem números, com pelo menos 3 caracteres)
-            if (not any(c.isdigit() for c in text.replace(".", "").replace(",", "")) 
-                and len(text) >= 3):
-                current_item["nome"] = text
-            
-            # Padrão para quantidades (X/Y com possíveis separadores de milhar)
-            elif "/" in text:
-                # Limpar e formatar o texto (remove pontos como separadores de milhar)
+            # Detectar categorias (texto em negrito/maior)
+            if data["height"][i] > (sum(data["height"])/len(data["height"])) * 1.5:
+                current_category = text
+                continue
+                
+            # Padrão para quantidades (X/Y)
+            if "/" in text and any(c.isdigit() for c in text):
+                # Limpar e formatar o texto
                 clean_text = text.replace(".", "").replace(",", "")
                 partes = clean_text.split("/")
                 
-                if (len(partes) == 2 
-                    and partes[0].strip().isdigit() 
-                    and partes[1].strip().isdigit()):
-                    
-                    current_item["quantidade"] = text
+                if len(partes) == 2 and partes[0].isdigit() and partes[1].isdigit():
                     atual = int(partes[0])
                     total = int(partes[1])
                     
-                    # Verificar se está faltando e se tem um nome associado
-                    if atual < total and current_item["nome"]:
-                        # Extrair região do item (área acima e à esquerda da quantidade)
+                    if atual < total:
+                        # Recortar área do item (nome + quantidade)
                         x, y = data["left"][i], data["top"][i]
                         w, h = data["width"][i], data["height"][i]
                         
-                        # Ajustes para pegar o ícone (valores empíricos)
-                        icon_height = int(h * 1.5)
-                        icon_width = int(w * 2)
+                        # Ajustar coordenadas para pegar o nome do item
+                        roi_x = max(0, x - 300)  # Aproximadamente 300px para esquerda
+                        roi_y = max(0, y - 30)
+                        roi_w = min(opencv_img.shape[1] - roi_x, 400)
+                        roi_h = min(opencv_img.shape[0] - roi_y, h + 60)
                         
-                        roi_x1 = max(0, x - icon_width)
-                        roi_y1 = max(0, y - icon_height)
-                        roi_x2 = x
-                        roi_y2 = y
+                        roi = opencv_img[roi_y:roi_y+roi_h, roi_x:roi_x+roi_w]
                         
-                        roi = opencv_img[roi_y1:roi_y2, roi_x1:roi_x2]
+                        # Tentar extrair o nome do item usando OCR na região
+                        item_data = pytesseract.image_to_data(roi, config=r'--oem 3 --psm 6 -l por+eng')
+                        item_name = ""
+                        for line in item_data.split('\n'):
+                            parts = line.split()
+                            if len(parts) >= 12 and not any(c.isdigit() for c in parts[11]):
+                                item_name = parts[11] + " " + item_name
+                        
+                        item_name = item_name.strip() or f"Item {len(resultados)+1}"
                         
                         # Converter para bytes
                         _, buffer = cv2.imencode('.png', roi)
                         icon_image = io.BytesIO(buffer)
-                        icon_image.name = 'item.png'
                         
                         resultados.append({
-                            "nome": current_item["nome"],
+                            "categoria": current_category,
+                            "nome": item_name,
                             "quantidade": text,
-                            "imagem_bytes": icon_image,
-                            "faltando": total - atual
+                            "faltando": total - atual,
+                            "imagem_bytes": icon_image
                         })
-                    
-                    current_item = {"nome": "", "quantidade": ""}
         
         return resultados
 
