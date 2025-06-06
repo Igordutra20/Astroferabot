@@ -150,10 +150,6 @@ async def on_message(message):
     if message.author == bot.user or not isinstance(message.channel, discord.DMChannel):
         return
     
-    # Verificar se tem anexo de imagem
-    if not message.attachments or not message.attachments[0].filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-        await message.channel.send("❌ Por favor, envie uma imagem (PNG, JPG ou JPEG).")
-        return
 
     # Aqui você pode processar a imagem ou enviar para um canal de administradores
     # Vou criar um exemplo enviando para um canal específico
