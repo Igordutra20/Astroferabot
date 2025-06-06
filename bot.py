@@ -3,6 +3,8 @@ from discord.ext import commands
 from discord import app_commands
 import asyncio
 import os
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -105,6 +107,17 @@ async def perm_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.errors.MissingPermissions):
         await interaction.response.send_message("❌ Você não tem permissão para usar este comando.", ephemeral=True)
 
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'Bot is running.')
+
+def run_web_server():
+    server = HTTPServer(('0.0.0.0', 10000), DummyHandler)
+    server.serve_forever()
+
+# Iniciar o servidor web falso em segundo plano
+threading.Thread(target=run_web_server, daemon=True).start()
 # Início do bot com token do ambiente (Render)
-import os
 bot.run(os.getenv("DISCORD_TOKEN"))
