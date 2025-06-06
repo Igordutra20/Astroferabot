@@ -155,7 +155,7 @@ async def on_message(message):
     # Vou criar um exemplo enviando para um canal específico
     
     # Substitua CHANNEL_ID pelo ID do canal onde as requisições devem ser enviadas
-    channel_id = 1380521025804177448  # Troque pelo ID real do seu canal
+    channel_id = 1362084670266806523  # Troque pelo ID real do seu canal
     channel = bot.get_channel(channel_id)
     
     if channel:
