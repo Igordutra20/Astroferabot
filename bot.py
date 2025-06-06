@@ -139,45 +139,88 @@ async def requisicao(interaction: discord.Interaction):
         )
 
 def detectar_itens_faltando(image_bytes):
-    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    opencv_img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-    data = pytesseract.image_to_data(opencv_img, output_type=pytesseract.Output.DICT, lang='eng')
-    resultados = []
-
-    for i in range(len(data["text"])):
-        texto = data["text"][i]
+    try:
+        # Converter bytes para imagem OpenCV
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        opencv_img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
         
-        if "/" in texto:
-            partes = texto.split("/")
-            if len(partes) == 2 and partes[0].replace('.', '').isdigit() and partes[1].replace('.', '').isdigit():
-                atual = int(partes[0].replace('.', ''))
-                total = int(partes[1].replace('.', ''))
+        # Pré-processamento avançado
+        gray = cv2.cvtColor(opencv_img, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray, (3, 3), 0)
+        thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                    cv2.THRESH_BINARY_INV, 11, 2)
+        
+        # Configurações customizadas para seu formato específico
+        custom_config = r'--oem 3 --psm 6 -l por+eng'
+        data = pytesseract.image_to_data(thresh, config=custom_config, 
+                                       output_type=pytesseract.Output.DICT)
+        
+        resultados = []
+        current_item = {"nome": "", "quantidade": ""}
 
-                x = data["left"][i]
-                y = data["top"][i]
-                w = data["width"][i]
-                h = data["height"][i]
+        for i in range(len(data["text"])):
+            text = data["text"][i].strip()
+            conf = int(data["conf"][i])
+            
+            # Filtros de qualidade
+            if conf < 70 or not text or len(text) < 2:
+                continue
+                
+            # Padrão para nomes de itens (linhas sem números, com pelo menos 3 caracteres)
+            if (not any(c.isdigit() for c in text.replace(".", "").replace(",", "")) 
+                and len(text) >= 3):
+                current_item["nome"] = text
+            
+            # Padrão para quantidades (X/Y com possíveis separadores de milhar)
+            elif "/" in text:
+                # Limpar e formatar o texto (remove pontos como separadores de milhar)
+                clean_text = text.replace(".", "").replace(",", "")
+                partes = clean_text.split("/")
+                
+                if (len(partes) == 2 
+                    and partes[0].strip().isdigit() 
+                    and partes[1].strip().isdigit()):
+                    
+                    current_item["quantidade"] = text
+                    atual = int(partes[0])
+                    total = int(partes[1])
+                    
+                    # Verificar se está faltando e se tem um nome associado
+                    if atual < total and current_item["nome"]:
+                        # Extrair região do item (área acima e à esquerda da quantidade)
+                        x, y = data["left"][i], data["top"][i]
+                        w, h = data["width"][i], data["height"][i]
+                        
+                        # Ajustes para pegar o ícone (valores empíricos)
+                        icon_height = int(h * 1.5)
+                        icon_width = int(w * 2)
+                        
+                        roi_x1 = max(0, x - icon_width)
+                        roi_y1 = max(0, y - icon_height)
+                        roi_x2 = x
+                        roi_y2 = y
+                        
+                        roi = opencv_img[roi_y1:roi_y2, roi_x1:roi_x2]
+                        
+                        # Converter para bytes
+                        _, buffer = cv2.imencode('.png', roi)
+                        icon_image = io.BytesIO(buffer)
+                        icon_image.name = 'item.png'
+                        
+                        resultados.append({
+                            "nome": current_item["nome"],
+                            "quantidade": text,
+                            "imagem_bytes": icon_image,
+                            "faltando": total - atual
+                        })
+                    
+                    current_item = {"nome": "", "quantidade": ""}
+        
+        return resultados
 
-                roi_texto = opencv_img[y:y + h, x:x + w]
-                cor_media = cv2.mean(roi_texto)[:3]
-                is_red = cor_media[2] > 140 and cor_media[0] < 100 and cor_media[1] < 100
-
-                if atual < total and is_red:
-                    largura_icone = h
-                    inicio_x = max(0, x - largura_icone - 10)
-                    fim_x = x - 10
-                    roi_icone = opencv_img[y:y + h, inicio_x:fim_x]
-
-                    _, buffer = cv2.imencode('.png', roi_icone)
-                    icon_image = io.BytesIO(buffer)
-                    icon_image.name = f'item_{i}.png'
-
-                    resultados.append({
-                        "quantidade": f"{atual}/{total}",
-                        "imagem_bytes": icon_image
-                    })
-
-    return resultados
+    except Exception as e:
+        print(f"Erro no processamento: {str(e)}")
+        return []
 
 async def processar_requisicao(message, attachment):
     try:
