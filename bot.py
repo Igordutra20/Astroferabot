@@ -15,6 +15,7 @@ intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 acertos_arquivo = "acertos.txt"
 meta = 530
+bot.requisicoes_pendentes = {}
 
 class AcertoView(discord.ui.View):
     @discord.ui.button(label="Responder", style=discord.ButtonStyle.primary)
@@ -38,7 +39,6 @@ class AcertoView(discord.ui.View):
             acertos = int(msg.content.strip())
             nome_usuario = interaction.user.name
 
-            # Atualizar ou adicionar no arquivo
             novos_dados = []
             atualizado = False
 
@@ -63,7 +63,6 @@ class AcertoView(discord.ui.View):
         except asyncio.TimeoutError:
             await interaction.user.send("⏰ Tempo esgotado para responder.")
 
-# Adicione esta classe após a classe AcertoView
 class RequisicaoView(discord.ui.View):
     def __init__(self, requisicao_id):
         super().__init__()
@@ -121,7 +120,6 @@ class RequisicaoView(discord.ui.View):
         del bot.requisicoes_pendentes[self.requisicao_id]
         await interaction.response.send_message("✅ Requisição recusada com sucesso!", ephemeral=True)
 
-# Adicione este comando após os comandos existentes
 @bot.tree.command(name="requisicao", description="Solicitar itens que faltam")
 async def requisicao(interaction: discord.Interaction):
     try:
@@ -140,42 +138,62 @@ async def requisicao(interaction: discord.Interaction):
             ephemeral=True
         )
 
-# Adicione este handler após os handlers existentes
-@bot.event
-async def on_message(message):
-    # Processar mensagens existentes (não remover esta parte)
-    await bot.process_commands(message)
-    
-    # Ignorar mensagens do próprio bot
-    if message.author == bot.user:
-        return
-    
-    # Processar imagens enviadas via DM para requisição
-    if isinstance(message.channel, discord.DMChannel) and message.attachments:
-        for attachment in message.attachments:
-            if attachment.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-                await processar_requisicao(message, attachment)
+def detectar_itens_faltando(image_bytes):
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    opencv_img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    data = pytesseract.image_to_data(opencv_img, output_type=pytesseract.Output.DICT, lang='eng')
+    resultados = []
+
+    for i in range(len(data["text"])):
+        texto = data["text"][i]
+        
+        if "/" in texto:
+            partes = texto.split("/")
+            if len(partes) == 2 and partes[0].replace('.', '').isdigit() and partes[1].replace('.', '').isdigit():
+                atual = int(partes[0].replace('.', ''))
+                total = int(partes[1].replace('.', ''))
+
+                x = data["left"][i]
+                y = data["top"][i]
+                w = data["width"][i]
+                h = data["height"][i]
+
+                roi_texto = opencv_img[y:y + h, x:x + w]
+                cor_media = cv2.mean(roi_texto)[:3]
+                is_red = cor_media[2] > 140 and cor_media[0] < 100 and cor_media[1] < 100
+
+                if atual < total and is_red:
+                    largura_icone = h
+                    inicio_x = max(0, x - largura_icone - 10)
+                    fim_x = x - 10
+                    roi_icone = opencv_img[y:y + h, inicio_x:fim_x]
+
+                    _, buffer = cv2.imencode('.png', roi_icone)
+                    icon_image = io.BytesIO(buffer)
+                    icon_image.name = f'item_{i}.png'
+
+                    resultados.append({
+                        "quantidade": f"{atual}/{total}",
+                        "imagem_bytes": icon_image
+                    })
+
+    return resultados
 
 async def processar_requisicao(message, attachment):
     try:
-        # Baixar a imagem
         image_bytes = await attachment.read()
-        
-        # Detectar itens faltando
         itens_faltando = detectar_itens_faltando(image_bytes)
         
         if not itens_faltando:
             await message.channel.send("✅ Todos os itens parecem estar completos!")
             return
         
-        # Criar embed para a requisição
         embed = discord.Embed(
             title=f"Requisição de {message.author.display_name}",
             description="⚠️ Itens faltando detectados:",
             color=discord.Color.orange()
         )
         
-        # Adicionar campos para cada item faltando
         for i, item in enumerate(itens_faltando, 1):
             embed.add_field(
                 name=f"Item {i}",
@@ -183,23 +201,18 @@ async def processar_requisicao(message, attachment):
                 inline=False
             )
         
-        # Usar a primeira imagem como thumbnail
         first_image = itens_faltando[0]['imagem_bytes']
         first_image.seek(0)
         file = discord.File(first_image, filename="item.png")
         embed.set_thumbnail(url="attachment://item.png")
         
-        # Criar ID único para a requisição
         requisicao_id = str(message.id)
-        if not hasattr(bot, 'requisicoes_pendentes'):
-            bot.requisicoes_pendentes = {}
         bot.requisicoes_pendentes[requisicao_id] = {
             "user_id": message.author.id,
             "itens": itens_faltando
         }
         
-        # Enviar para o canal de requisições (substitua pelo ID do seu canal)
-        canal_requisicoes = bot.get_channel(1331515800607002675)  # Substitua pelo ID do canal desejado
+        canal_requisicoes = bot.get_channel(1331515800607002675)
         
         if canal_requisicoes:
             view = RequisicaoView(requisicao_id)
@@ -217,6 +230,18 @@ async def processar_requisicao(message, attachment):
         await message.channel.send("❌ Ocorreu um erro ao processar sua imagem. Tente novamente.")
 
 @bot.event
+async def on_message(message):
+    await bot.process_commands(message)
+    
+    if message.author == bot.user:
+        return
+    
+    if isinstance(message.channel, discord.DMChannel) and message.attachments:
+        for attachment in message.attachments:
+            if attachment.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+                await processar_requisicao(message, attachment)
+
+@bot.event
 async def on_ready():
     print(f"Bot online como {bot.user}")
     try:
@@ -224,7 +249,6 @@ async def on_ready():
         print(f"Comandos sincronizados: {[cmd.name for cmd in synced]}")
     except Exception as e:
         print(f"Erro ao sincronizar comandos: {e}")
-
 
 @bot.tree.command(name="pesquisa", description="Inicia uma pesquisa de acertos.")
 @app_commands.checks.has_permissions(administrator=True)
@@ -238,7 +262,6 @@ async def pesquisa(interaction: discord.Interaction):
         await interaction.delete_original_response()
     except discord.NotFound:
         pass
-
 
 @bot.tree.command(name="rankacerto", description="Mostra o ranking de acertos.")
 @app_commands.checks.has_permissions(administrator=True)
@@ -274,7 +297,5 @@ def run_web_server():
     server = HTTPServer(('0.0.0.0', 10000), DummyHandler)
     server.serve_forever()
 
-# Iniciar o servidor web falso em segundo plano
 threading.Thread(target=run_web_server, daemon=True).start()
-# Início do bot com token do ambiente (Render)
 bot.run(os.getenv("DISCORD_TOKEN"))
