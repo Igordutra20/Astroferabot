@@ -1,5 +1,1 @@
 discord.py==2.3.2
-opencv-python
-pytesseract
-Pillow
-numpy
