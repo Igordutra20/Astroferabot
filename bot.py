@@ -4,7 +4,8 @@ from discord import app_commands
 import asyncio
 from datetime import datetime
 
-TOKEN = "SEU_TOKEN_AQUI"
+import os
+TOKEN = os.getenv("TOKEN")
 
 # IDs dos canais
 CANAL_PUBLICO_ID = 123456789012345678   # canal onde aparece o embed com botão
