@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# Instala o Tesseract OCR
-apt-get update && apt-get install -y tesseract-ocr
+# Atualizar pip, setuptools e wheel
+python -m pip install --upgrade pip setuptools wheel
 
-# Instala as dependências do projeto Python
+# Instalar as dependências do projeto
 pip install -r requirements.txt
